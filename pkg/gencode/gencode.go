@@ -93,7 +93,7 @@ func NewGenerator(config Config) *Generator {
 	if config.GenConfig.Date == "" {
 		config.GenConfig.Date = time.Now().Format("2006-01-02")
 	}
-	
+
 	// 设置模板路径为当前包下的template目录
 	// 获取当前文件所在目录
 	currentDir, _ := os.Getwd()
@@ -693,8 +693,6 @@ func (g *Generator) getControllerOutputPath(data TemplateData) string {
 
 	return filepath.Join(outputPath, strings.ReplaceAll(pkgConfig.ControllerPackage, ".", "/"), data.ClassName+"Controller.java")
 }
-
-`
 
 // Close 关闭数据库连接
 func (g *Generator) Close() error {
