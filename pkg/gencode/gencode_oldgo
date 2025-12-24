@@ -69,7 +69,9 @@ const (
 	ServiceImplTemplateFile    = "pkg/gencode/template/java/src/main/java/service/impl/serviceImpl.java.tpl"
 	ControllerTemplateFile     = "pkg/gencode/template/java/src/main/java/controller/controller.java.tpl"
 	ApplicationTemplateFile    = "pkg/gencode/template/java/src/main/java/Application.java.tpl"
+	SwaggerConfigTemplateFile  = "pkg/gencode/template/java/src/main/java/config/SwaggerConfig.java.tpl"
 	ApplicationYmlTemplateFile = "pkg/gencode/template/java/src/main/resources/application.yml.tpl"
+	ApplicationPropsTemplateFile = "pkg/gencode/template/java/src/main/resources/application.properties.tpl"
 	PomXmlTemplateFile         = "pkg/gencode/template/java/pom.xml.tpl"
 )
 
@@ -160,6 +162,14 @@ func (g *Generator) GenerateCode() error {
 	err = g.GenerateApplicationConfig()
 	if err != nil {
 		return fmt.Errorf("生成application配置文件失败: %v", err)
+	}
+
+	// 生成Swagger配置（如果启用）
+	if g.Config.GenConfig.EnableSwagger {
+		err = g.GenerateSwaggerConfig()
+		if err != nil {
+			return fmt.Errorf("生成Swagger配置失败: %v", err)
+		}
 	}
 
 	// 遍历所有表
@@ -274,59 +284,6 @@ func (g *Generator) createTemplateWithFuncs(templatePath string) (*template.Temp
 	return tmpl, nil
 }
 
-// GeneratePomXml 生成Maven pom.xml文件
-func (g *Generator) GeneratePomXml() error {
-	// 使用模板生成pom.xml
-	tmplPath := filepath.Join(g.TemplatePath, PomXmlTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载pom.xml模板失败: %v", err)
-	}
-
-	templateData := TemplateData{
-		Config: g.Config,
-	}
-
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	pomPath := filepath.Join(outputPath, "pom.xml")
-	return g.generateFile(pomPath, tmpl, templateData)
-}
-
-// GenerateApplication 生成SpringBoot主启动类
-func (g *Generator) GenerateApplication() error {
-	tmplPath := filepath.Join(g.TemplatePath, ApplicationTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载Application模板失败: %v", err)
-	}
-
-	templateData := TemplateData{
-		Config: g.Config,
-	}
-
-	return g.generateFile(g.getApplicationOutputPath(), tmpl, templateData)
-}
-
-// GenerateApplicationConfig 生成application配置文件
-func (g *Generator) GenerateApplicationConfig() error {
-	templateData := TemplateData{
-		Config: g.Config,
-	}
-
-	// 生成application.yml
-	tmplPath := filepath.Join(g.TemplatePath, ApplicationYmlTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载application.yml模板失败: %v", err)
-	}
-
-	return g.generateFile(g.getApplicationYmlOutputPath(), tmpl, templateData)
-}
-
 // GenerateEntity 生成实体类
 func (g *Generator) GenerateEntity(data TemplateData) error {
 	// 加载外部模板文件
@@ -393,6 +350,112 @@ func (g *Generator) GenerateController(data TemplateData) error {
 	return g.generateFile(g.getControllerOutputPath(data), tmpl, data)
 }
 
+// GeneratePomXml 生成Maven pom.xml文件
+func (g *Generator) GeneratePomXml() error {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	pomContent := `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>` + g.Config.PackageConfig.BasePackage + `</groupId>
+    <artifactId>generated-project</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>Generated Project</name>
+    <description>Auto generated Spring Boot project</description>
+
+    <properties>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring-boot.version>2.7.0</spring-boot.version>
+        <mybatis-plus.version>3.5.2</mybatis-plus.version>
+    </properties>
+
+    <dependencies>
+        <!-- Spring Boot Starter Web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <version>${spring-boot.version}</version>
+        </dependency>
+
+        <!-- MyBatis Plus -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-boot-starter</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+
+        <!-- MySQL Driver -->
+        <dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <version>8.0.33</version>
+        </dependency>`
+
+	if g.Config.GenConfig.EnableLombok {
+		pomContent += `
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.24</version>
+            <scope>provided</scope>
+        </dependency>`
+	}
+
+	if g.Config.GenConfig.EnableSwagger {
+		pomContent += `
+
+        <!-- Swagger -->
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger2</artifactId>
+            <version>3.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger-ui</artifactId>
+            <version>3.0.0</version>
+        </dependency>`
+	}
+
+	pomContent += `
+
+        <!-- Spring Boot Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <version>${spring-boot.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>`
+
+	pomPath := filepath.Join(outputPath, "pom.xml.tpl")
+	return os.WriteFile(pomPath, []byte(pomContent), 0644)
+}
+
 // generateFile 生成文件
 func (g *Generator) generateFile(filePath string, tmpl *template.Template, data interface{}) error {
 	file, err := os.Create(filePath)
@@ -407,27 +470,6 @@ func (g *Generator) generateFile(filePath string, tmpl *template.Template, data 
 	}
 
 	return nil
-}
-
-// getApplicationOutputPath 获取Application启动类输出路径
-func (g *Generator) getApplicationOutputPath() string {
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	basePath := strings.ReplaceAll(g.Config.PackageConfig.BasePackage, ".", "/")
-	return filepath.Join(outputPath, "src", "main", "java", basePath, "Application.java")
-}
-
-// getApplicationYmlOutputPath 获取application.yml输出路径
-func (g *Generator) getApplicationYmlOutputPath() string {
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	return filepath.Join(outputPath, "src", "main", "resources", "application.yml")
 }
 
 // getEntityOutputPath 获取实体类输出路径
@@ -516,6 +558,89 @@ func (g *Generator) toCamelCase(str string) string {
 		}
 	}
 	return result.String()
+}
+
+// GenerateApplication 生成SpringBoot主启动类
+func (g *Generator) GenerateApplication() error {
+	tmplPath := filepath.Join(g.TemplatePath, ApplicationTemplateFile)
+	tmpl, err := g.createTemplateWithFuncs(tmplPath)
+	if err != nil {
+		return fmt.Errorf("加载Application模板失败: %v", err)
+	}
+
+	templateData := TemplateData{
+		Config: g.Config,
+	}
+
+	return g.generateFile(g.getApplicationOutputPath(), tmpl, templateData)
+}
+
+// GenerateApplicationConfig 生成application配置文件
+func (g *Generator) GenerateApplicationConfig() error {
+	templateData := TemplateData{
+		Config: g.Config,
+	}
+
+	// 生成application.yml
+	tmplPath := filepath.Join(g.TemplatePath, ApplicationYmlTemplateFile)
+	tmpl, err := g.createTemplateWithFuncs(tmplPath)
+	if err != nil {
+		return fmt.Errorf("加载application.yml模板失败: %v", err)
+	}
+
+	err = g.generateFile(g.getApplicationYmlOutputPath(), tmpl, templateData)
+	if err != nil {
+		return err
+	}
+
+	return g.generateFile(g.getApplicationYmlOutputPath(), tmpl, templateData)
+}
+
+// GenerateSwaggerConfig 生成Swagger配置类
+func (g *Generator) GenerateSwaggerConfig() error {
+	tmplPath := filepath.Join(g.TemplatePath, SwaggerConfigTemplateFile)
+	tmpl, err := g.createTemplateWithFuncs(tmplPath)
+	if err != nil {
+		return fmt.Errorf("加载SwaggerConfig模板失败: %v", err)
+	}
+
+	templateData := TemplateData{
+		Config: g.Config,
+	}
+
+	return g.generateFile(g.getSwaggerConfigOutputPath(), tmpl, templateData)
+}
+
+// getApplicationOutputPath 获取Application启动类输出路径
+func (g *Generator) getApplicationOutputPath() string {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	basePath := strings.ReplaceAll(g.Config.PackageConfig.BasePackage, ".", "/")
+	return filepath.Join(outputPath, "src", "main", "java", basePath, "Application.java")
+}
+
+// getApplicationYmlOutputPath 获取application.yml输出路径
+func (g *Generator) getApplicationYmlOutputPath() string {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	return filepath.Join(outputPath, "src", "main", "resources", "application.yml")
+}
+
+// getSwaggerConfigOutputPath 获取SwaggerConfig输出路径
+func (g *Generator) getSwaggerConfigOutputPath() string {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	basePath := strings.ReplaceAll(g.Config.PackageConfig.BasePackage, ".", "/")
+	return filepath.Join(outputPath, "src", "main", "java", basePath, "config", "SwaggerConfig.java")
 }
 
 // toPascalCase 下划线转大驼峰命名

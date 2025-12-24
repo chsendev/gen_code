@@ -1,0 +1,964 @@
+package gencode
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/template"
+	"time"
+)
+
+// Config 代码生成器配置
+type Config struct {
+	GenConfig     GenConfig     `json:"gen_config"`
+	PackageConfig PackageConfig `json:"package_config"`
+}
+
+// GenConfig 代码生成配置
+type GenConfig struct {
+	OutputPath    string `json:"output_path"`
+	EnableLombok  bool   `json:"enable_lombok"`
+	EnableSwagger bool   `json:"enable_swagger"`
+	Author        string `json:"author"`
+	Date          string `json:"date"`
+}
+
+// PackageConfig 包名配置
+type PackageConfig struct {
+	BasePackage       string `json:"base_package"`
+	EntityPackage     string `json:"entity_package"`
+	MapperPackage     string `json:"mapper_package"`
+	ServicePackage    string `json:"service_package"`
+	ControllerPackage string `json:"controller_package"`
+}
+
+// Table 表信息
+type Table struct {
+	TableName    string
+	TableComment string
+	Fields       []Field
+	PrimaryKey   Field
+}
+
+// Field 字段信息
+type Field struct {
+	ColumnName    string
+	ColumnType    string
+	ColumnComment string
+	IsNullable    bool
+	IsPrimaryKey  bool
+	GoType        string
+	JavaType      string
+	FieldName     string
+}
+
+// Generator 代码生成器
+type Generator struct {
+	Config       Config
+	Tables       []Table
+	TemplatePath string
+}
+
+// 模板文件路径常量
+const (
+	EntityTemplateFile      = "pkg/gencode/template/java/src/main/java/entity/entity.java.tpl"
+	MapperTemplateFile      = "pkg/gencode/template/java/src/main/java/mapper/mapper.java.tpl"
+	MapperXmlTemplateFile   = "pkg/gencode/template/java/src/main/java/mapper/mapper.xml.tpl"
+	ServiceTemplateFile     = "pkg/gencode/template/java/src/main/java/service/service.java.tpl"
+	ServiceImplTemplateFile = "pkg/gencode/template/java/src/main/java/service/impl/serviceImpl.java.tpl"
+	ControllerTemplateFile  = "pkg/gencode/template/java/src/main/java/controller/controller.java.tpl"
+)
+
+// NewGenerator 创建代码生成器实例
+func NewGenerator(config Config, tables []Table) *Generator {
+	if config.GenConfig.Date == "" {
+		config.GenConfig.Date = time.Now().Format("2006-01-02")
+	}
+
+	// 设置模板路径
+	currentDir, _ := os.Getwd()
+	// 如果当前目录以pkg/gencode结尾，说明是在测试环境，需要回到项目根目录
+	if strings.HasSuffix(currentDir, "pkg/gencode") {
+		currentDir = filepath.Join(currentDir, "../..")
+	}
+
+	return &Generator{
+		Config:       config,
+		Tables:       tables,
+		TemplatePath: currentDir,
+	}
+}
+
+// Init 初始化代码生成器
+func (g *Generator) Init() error {
+	// 确保输出目录存在
+	err := g.EnsureOutputDirs()
+	if err != nil {
+		return fmt.Errorf("创建输出目录失败: %v", err)
+	}
+
+	return nil
+}
+
+// GeneratePomXml 生成Maven pom.xml文件
+func (g *Generator) GeneratePomXml() error {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	pomContent := `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>` + g.Config.PackageConfig.BasePackage + `</groupId>
+    <artifactId>generated-project</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>Generated Project</name>
+    <description>Auto generated Spring Boot project</description>
+
+    <properties>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring-boot.version>2.7.0</spring-boot.version>
+        <mybatis-plus.version>3.5.2</mybatis-plus.version>
+    </properties>
+
+    <dependencies>
+        <!-- Spring Boot Starter Web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <version>${spring-boot.version}</version>
+        </dependency>
+
+        <!-- MyBatis Plus -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-boot-starter</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+
+        <!-- MySQL Driver -->
+        <dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <version>8.0.33</version>
+        </dependency>`
+
+	if g.Config.GenConfig.EnableLombok {
+		pomContent += `
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.24</version>
+            <scope>provided</scope>
+        </dependency>`
+	}
+
+	if g.Config.GenConfig.EnableSwagger {
+		pomContent += `
+
+        <!-- Swagger -->
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger2</artifactId>
+            <version>3.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger-ui</artifactId>
+            <version>3.0.0</version>
+        </dependency>`
+	}
+
+	pomContent += `
+
+        <!-- Spring Boot Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <version>${spring-boot.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>`
+
+	pomPath := filepath.Join(outputPath, "pom.xml")
+	return os.WriteFile(pomPath, []byte(pomContent), 0644)
+}
+
+// EnsureOutputDirs 确保输出目录存在
+func (g *Generator) EnsureOutputDirs() error {
+	outputDir := g.Config.GenConfig.OutputPath
+	if outputDir == "" {
+		outputDir = "./output"
+	}
+
+	// 创建标准Maven目录结构
+	pkgConfig := g.Config.PackageConfig
+	
+	// 将包名转换为目录路径
+	entityPath := strings.ReplaceAll(pkgConfig.EntityPackage, ".", "/")
+	mapperPath := strings.ReplaceAll(pkgConfig.MapperPackage, ".", "/")
+	servicePath := strings.ReplaceAll(pkgConfig.ServicePackage, ".", "/")
+	controllerPath := strings.ReplaceAll(pkgConfig.ControllerPackage, ".", "/")
+	
+	dirs := []string{
+		// Maven标准目录结构
+		filepath.Join(outputDir, "src", "main", "java", entityPath),
+		filepath.Join(outputDir, "src", "main", "java", mapperPath),
+		filepath.Join(outputDir, "src", "main", "java", servicePath, "impl"),
+		filepath.Join(outputDir, "src", "main", "java", controllerPath),
+		filepath.Join(outputDir, "src", "main", "resources", "mapper"),
+		filepath.Join(outputDir, "src", "test", "java"),
+		filepath.Join(outputDir, "src", "test", "resources"),
+	}
+
+	for _, dir := range dirs {
+		err := os.MkdirAll(dir, 0755)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// GeneratePomXml 生成Maven pom.xml文件
+func (g *Generator) GeneratePomXml() error {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	pomContent := `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>` + g.Config.PackageConfig.BasePackage + `</groupId>
+    <artifactId>generated-project</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>Generated Project</name>
+    <description>Auto generated Spring Boot project</description>
+
+    <properties>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring-boot.version>2.7.0</spring-boot.version>
+        <mybatis-plus.version>3.5.2</mybatis-plus.version>
+    </properties>
+
+    <dependencies>
+        <!-- Spring Boot Starter Web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <version>${spring-boot.version}</version>
+        </dependency>
+
+        <!-- MyBatis Plus -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-boot-starter</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+
+        <!-- MySQL Driver -->
+        <dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <version>8.0.33</version>
+        </dependency>`
+
+	if g.Config.GenConfig.EnableLombok {
+		pomContent += `
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.24</version>
+            <scope>provided</scope>
+        </dependency>`
+	}
+
+	if g.Config.GenConfig.EnableSwagger {
+		pomContent += `
+
+        <!-- Swagger -->
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger2</artifactId>
+            <version>3.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger-ui</artifactId>
+            <version>3.0.0</version>
+        </dependency>`
+	}
+
+	pomContent += `
+
+        <!-- Spring Boot Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <version>${spring-boot.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>`
+
+	pomPath := filepath.Join(outputPath, "pom.xml")
+	return os.WriteFile(pomPath, []byte(pomContent), 0644)
+}
+
+// GenerateCode 生成代码
+func (g *Generator) GenerateCode() error {
+	// 生成Maven pom.xml文件
+	err := g.GeneratePomXml()
+	if err != nil {
+		return fmt.Errorf("生成pom.xml失败: %v", err)
+	}
+
+	// 遍历所有表
+	for _, table := range g.Tables {
+		// 准备模板数据
+		templateData := g.prepareTemplateData(&table)
+
+		// 生成实体类
+		err := g.GenerateEntity(templateData)
+		if err != nil {
+			return err
+		}
+
+		// 生成Mapper接口
+		err = g.GenerateMapper(templateData)
+		if err != nil {
+			return err
+		}
+
+		// 生成Mapper XML
+		err = g.GenerateMapperXML(templateData)
+		if err != nil {
+			return err
+		}
+
+		// 生成Service接口
+		err = g.GenerateService(templateData)
+		if err != nil {
+			return err
+		}
+
+		// 生成Service实现类
+		err = g.GenerateServiceImpl(templateData)
+		if err != nil {
+			return err
+		}
+
+		// 生成Controller
+		err = g.GenerateController(templateData)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// GeneratePomXml 生成Maven pom.xml文件
+func (g *Generator) GeneratePomXml() error {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	pomContent := `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>` + g.Config.PackageConfig.BasePackage + `</groupId>
+    <artifactId>generated-project</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>Generated Project</name>
+    <description>Auto generated Spring Boot project</description>
+
+    <properties>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring-boot.version>2.7.0</spring-boot.version>
+        <mybatis-plus.version>3.5.2</mybatis-plus.version>
+    </properties>
+
+    <dependencies>
+        <!-- Spring Boot Starter Web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <version>${spring-boot.version}</version>
+        </dependency>
+
+        <!-- MyBatis Plus -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-boot-starter</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+
+        <!-- MySQL Driver -->
+        <dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <version>8.0.33</version>
+        </dependency>`
+
+	if g.Config.GenConfig.EnableLombok {
+		pomContent += `
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.24</version>
+            <scope>provided</scope>
+        </dependency>`
+	}
+
+	if g.Config.GenConfig.EnableSwagger {
+		pomContent += `
+
+        <!-- Swagger -->
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger2</artifactId>
+            <version>3.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger-ui</artifactId>
+            <version>3.0.0</version>
+        </dependency>`
+	}
+
+	pomContent += `
+
+        <!-- Spring Boot Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <version>${spring-boot.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>`
+
+	pomPath := filepath.Join(outputPath, "pom.xml")
+	return os.WriteFile(pomPath, []byte(pomContent), 0644)
+}
+
+// TemplateData 模板数据
+type TemplateData struct {
+	Config            Config
+	Table             Table
+	ClassName         string
+	EntityPackage     string
+	MapperPackage     string
+	ServicePackage    string
+	ControllerPackage string
+	EnableLombok      bool
+	EnableSwagger     bool
+	Author            string
+	Date              string
+}
+
+// prepareTemplateData 准备模板数据
+func (g *Generator) prepareTemplateData(table *Table) TemplateData {
+	pkgConfig := g.Config.PackageConfig
+	genConfig := g.Config.GenConfig
+
+	// 生成类名（去掉前缀，如果有的话）
+	className := table.TableName
+	className = g.toPascalCase(className)
+
+	return TemplateData{
+		Config:            g.Config,
+		Table:             *table,
+		ClassName:         className,
+		EntityPackage:     pkgConfig.EntityPackage,
+		MapperPackage:     pkgConfig.MapperPackage,
+		ServicePackage:    pkgConfig.ServicePackage,
+		ControllerPackage: pkgConfig.ControllerPackage,
+		EnableLombok:      genConfig.EnableLombok,
+		EnableSwagger:     genConfig.EnableSwagger,
+		Author:            genConfig.Author,
+		Date:              genConfig.Date,
+	}
+}
+
+// GenerateEntity 生成实体类
+func (g *Generator) GenerateEntity(data TemplateData) error {
+	// 加载外部模板文件
+	tmplPath := filepath.Join(g.TemplatePath, EntityTemplateFile)
+	tmpl, err := g.createTemplateWithFuncs(tmplPath)
+	if err != nil {
+		return fmt.Errorf("加载实体类模板失败: %v", err)
+	}
+	return g.generateFile(g.getEntityOutputPath(data), tmpl, data)
+}
+
+// GenerateMapper 生成Mapper接口
+func (g *Generator) GenerateMapper(data TemplateData) error {
+	// 加载外部模板文件
+	tmplPath := filepath.Join(g.TemplatePath, MapperTemplateFile)
+	tmpl, err := g.createTemplateWithFuncs(tmplPath)
+	if err != nil {
+		return fmt.Errorf("加载Mapper接口模板失败: %v", err)
+	}
+	return g.generateFile(g.getMapperOutputPath(data), tmpl, data)
+}
+
+// GenerateMapperXML 生成Mapper XML
+func (g *Generator) GenerateMapperXML(data TemplateData) error {
+	// 加载外部模板文件
+	tmplPath := filepath.Join(g.TemplatePath, MapperXmlTemplateFile)
+	tmpl, err := g.createTemplateWithFuncs(tmplPath)
+	if err != nil {
+		return fmt.Errorf("加载Mapper XML模板失败: %v", err)
+	}
+	return g.generateFile(g.getMapperXmlOutputPath(data), tmpl, data)
+}
+
+// GenerateService 生成Service接口
+func (g *Generator) GenerateService(data TemplateData) error {
+	// 加载外部模板文件
+	tmplPath := filepath.Join(g.TemplatePath, ServiceTemplateFile)
+	tmpl, err := g.createTemplateWithFuncs(tmplPath)
+	if err != nil {
+		return fmt.Errorf("加载Service接口模板失败: %v", err)
+	}
+	return g.generateFile(g.getServiceOutputPath(data), tmpl, data)
+}
+
+// GenerateServiceImpl 生成Service实现类
+func (g *Generator) GenerateServiceImpl(data TemplateData) error {
+	// 加载外部模板文件
+	tmplPath := filepath.Join(g.TemplatePath, ServiceImplTemplateFile)
+	tmpl, err := g.createTemplateWithFuncs(tmplPath)
+	if err != nil {
+		return fmt.Errorf("加载Service实现类模板失败: %v", err)
+	}
+	return g.generateFile(g.getServiceImplOutputPath(data), tmpl, data)
+}
+
+// GenerateController 生成Controller
+func (g *Generator) GenerateController(data TemplateData) error {
+	// 加载外部模板文件
+	tmplPath := filepath.Join(g.TemplatePath, ControllerTemplateFile)
+	tmpl, err := g.createTemplateWithFuncs(tmplPath)
+	if err != nil {
+		return fmt.Errorf("加载Controller模板失败: %v", err)
+	}
+	return g.generateFile(g.getControllerOutputPath(data), tmpl, data)
+}
+
+// createTemplateWithFuncs 创建带有自定义函数的模板
+func (g *Generator) createTemplateWithFuncs(templatePath string) (*template.Template, error) {
+	// 定义自定义函数
+	funcMap := template.FuncMap{
+		"sub": func(a, b int) int {
+			return a - b
+		},
+		"add": func(a, b int) int {
+			return a + b
+		},
+	}
+
+	// 创建模板并添加自定义函数
+	tmpl := template.New(filepath.Base(templatePath)).Funcs(funcMap)
+	tmpl, err := tmpl.ParseFiles(templatePath)
+	if err != nil {
+		return nil, err
+	}
+
+	return tmpl, nil
+}
+
+// generateFile 生成文件
+func (g *Generator) generateFile(filePath string, tmpl *template.Template, data interface{}) error {
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("创建文件失败: %v", err)
+	}
+	defer file.Close()
+
+	err = tmpl.Execute(file, data)
+	if err != nil {
+		return fmt.Errorf("模板渲染失败: %v", err)
+	}
+
+	return nil
+}
+
+// GeneratePomXml 生成Maven pom.xml文件
+func (g *Generator) GeneratePomXml() error {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	pomContent := `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>` + g.Config.PackageConfig.BasePackage + `</groupId>
+    <artifactId>generated-project</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>Generated Project</name>
+    <description>Auto generated Spring Boot project</description>
+
+    <properties>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring-boot.version>2.7.0</spring-boot.version>
+        <mybatis-plus.version>3.5.2</mybatis-plus.version>
+    </properties>
+
+    <dependencies>
+        <!-- Spring Boot Starter Web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <version>${spring-boot.version}</version>
+        </dependency>
+
+        <!-- MyBatis Plus -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-boot-starter</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+
+        <!-- MySQL Driver -->
+        <dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <version>8.0.33</version>
+        </dependency>`
+
+	if g.Config.GenConfig.EnableLombok {
+		pomContent += `
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.24</version>
+            <scope>provided</scope>
+        </dependency>`
+	}
+
+	if g.Config.GenConfig.EnableSwagger {
+		pomContent += `
+
+        <!-- Swagger -->
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger2</artifactId>
+            <version>3.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger-ui</artifactId>
+            <version>3.0.0</version>
+        </dependency>`
+	}
+
+	pomContent += `
+
+        <!-- Spring Boot Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <version>${spring-boot.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>`
+
+	pomPath := filepath.Join(outputPath, "pom.xml")
+	return os.WriteFile(pomPath, []byte(pomContent), 0644)
+}
+
+// getEntityOutputPath 获取实体类输出路径
+func (g *Generator) getEntityOutputPath(data TemplateData) string {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	entityPath := strings.ReplaceAll(data.EntityPackage, ".", "/")
+	return filepath.Join(outputPath, "src", "main", "java", entityPath, data.ClassName+".java")
+}
+
+// getMapperOutputPath 获取Mapper接口输出路径
+func (g *Generator) getMapperOutputPath(data TemplateData) string {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	mapperPath := strings.ReplaceAll(data.MapperPackage, ".", "/")
+	return filepath.Join(outputPath, "src", "main", "java", mapperPath, data.ClassName+"Mapper.java")
+}
+
+// getMapperXmlOutputPath 获取Mapper XML输出路径
+func (g *Generator) getMapperXmlOutputPath(data TemplateData) string {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	return filepath.Join(outputPath, "src", "main", "resources", "mapper", data.ClassName+"Mapper.xml")
+}
+
+// getServiceOutputPath 获取Service接口输出路径
+func (g *Generator) getServiceOutputPath(data TemplateData) string {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	servicePath := strings.ReplaceAll(data.ServicePackage, ".", "/")
+	return filepath.Join(outputPath, "src", "main", "java", servicePath, "I"+data.ClassName+"Service.java")
+}
+
+// getServiceImplOutputPath 获取Service实现类输出路径
+func (g *Generator) getServiceImplOutputPath(data TemplateData) string {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	servicePath := strings.ReplaceAll(data.ServicePackage, ".", "/")
+	return filepath.Join(outputPath, "src", "main", "java", servicePath, "impl", data.ClassName+"ServiceImpl.java")
+}
+
+// getControllerOutputPath 获取Controller输出路径
+func (g *Generator) getControllerOutputPath(data TemplateData) string {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	controllerPath := strings.ReplaceAll(data.ControllerPackage, ".", "/")
+	return filepath.Join(outputPath, "src", "main", "java", controllerPath, data.ClassName+"Controller.java")
+}
+
+// Close 关闭资源（现在无需关闭数据库连接）
+func (g *Generator) Close() error {
+	return nil
+}
+
+// GeneratePomXml 生成Maven pom.xml文件
+func (g *Generator) GeneratePomXml() error {
+	outputPath := g.Config.GenConfig.OutputPath
+	if outputPath == "" {
+		outputPath = "./output"
+	}
+
+	pomContent := `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>` + g.Config.PackageConfig.BasePackage + `</groupId>
+    <artifactId>generated-project</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>Generated Project</name>
+    <description>Auto generated Spring Boot project</description>
+
+    <properties>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring-boot.version>2.7.0</spring-boot.version>
+        <mybatis-plus.version>3.5.2</mybatis-plus.version>
+    </properties>
+
+    <dependencies>
+        <!-- Spring Boot Starter Web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <version>${spring-boot.version}</version>
+        </dependency>
+
+        <!-- MyBatis Plus -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-boot-starter</artifactId>
+            <version>${mybatis-plus.version}</version>
+        </dependency>
+
+        <!-- MySQL Driver -->
+        <dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <version>8.0.33</version>
+        </dependency>`
+
+	if g.Config.GenConfig.EnableLombok {
+		pomContent += `
+
+        <!-- Lombok -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.24</version>
+            <scope>provided</scope>
+        </dependency>`
+	}
+
+	if g.Config.GenConfig.EnableSwagger {
+		pomContent += `
+
+        <!-- Swagger -->
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger2</artifactId>
+            <version>3.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.springfox</groupId>
+            <artifactId>springfox-swagger-ui</artifactId>
+            <version>3.0.0</version>
+        </dependency>`
+	}
+
+	pomContent += `
+
+        <!-- Spring Boot Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <version>${spring-boot.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>`
+
+	pomPath := filepath.Join(outputPath, "pom.xml")
+	return os.WriteFile(pomPath, []byte(pomContent), 0644)
+}
+
+// toCamelCase 下划线转驼峰命名
+func (g *Generator) toCamelCase(str string) string {
+	parts := strings.Split(str, "_")
+	if len(parts) == 0 {
+		return str
+	}
+
+	var result strings.Builder
+	result.WriteString(parts[0])
+	for i := 1; i < len(parts); i++ {
+		if len(parts[i]) > 0 {
+			result.WriteString(strings.ToUpper(parts[i][:1]) + strings.ToLower(parts[i][1:]))
+		}
+	}
+	return result.String()
+}
+
+// toPascalCase 下划线转大驼峰命名
+func (g *Generator) toPascalCase(str string) string {
+	parts := strings.Split(str, "_")
+	var result strings.Builder
+	for i := 0; i < len(parts); i++ {
+		if len(parts[i]) > 0 {
+			result.WriteString(strings.ToUpper(parts[i][:1]) + strings.ToLower(parts[i][1:]))
+		}
+	}
+	return result.String()
+}
