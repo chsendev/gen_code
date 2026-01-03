@@ -1,3 +1,5 @@
+@@Meta.Output="/src/main/java/{{.ControllerPackage | replace "." "/"}}/{{.ClassName}}Controller.java"
+
 package {{.ControllerPackage}};
 
 import org.springframework.web.bind.annotation.*;

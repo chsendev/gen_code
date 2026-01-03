@@ -1,3 +1,5 @@
+@@Meta.Output="/src/main/java/{{.MapperPackage | replace "." "/"}}/{{.ClassName}}Mapper.java"
+
 package {{.MapperPackage}};
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;

@@ -1,3 +1,5 @@
+@@Meta.Output="/src/main/resources/application.yml"
+
 server:
   port: 8080
   servlet:

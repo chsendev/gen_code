@@ -1,3 +1,5 @@
+@@Meta.Output="/src/main/java/{{.EntityPackage | replace "." "/"}}/{{.ClassName}}.java"
+
 package {{.EntityPackage}};
 
 {{if .EnableLombok}}import lombok.Data;

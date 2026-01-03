@@ -145,6 +145,7 @@ func TestGenerateCode(t *testing.T) {
 
 	// 创建配置
 	config := Config{
+		ProjectName: "gentest",
 		GenConfig: GenConfig{
 			OutputPath:    "tmp/maven_project",
 			EnableLombok:  true,
@@ -165,7 +166,7 @@ func TestGenerateCode(t *testing.T) {
 
 	// 调试：打印模板路径
 	t.Logf("模板路径: %s", generator.TemplatePath)
-	t.Logf("实体模板完整路径: %s", filepath.Join(generator.TemplatePath, EntityTemplateFile))
+	t.Logf("实体模板完整路径: %s", filepath.Join(generator.TemplatePath))
 
 	// 初始化生成器
 	err := generator.Init()
@@ -191,10 +192,7 @@ func TestGenerateCode(t *testing.T) {
 		"src/main/java/com/example/service",
 		"src/main/java/com/example/service/impl",
 		"src/main/java/com/example/controller",
-		"src/main/java/com/example/config",
 		"src/main/resources",
-		"src/test/java",
-		"src/test/resources",
 	}
 
 	for _, dir := range expectedDirs {

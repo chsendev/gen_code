@@ -1,3 +1,5 @@
+@@Meta.Output="/src/main/java/{{.ServicePackage | replace "." "/"}}/I{{.ClassName}}Service.java"
+
 package {{.ServicePackage}};
 
 import com.baomidou.mybatisplus.extension.service.IService;

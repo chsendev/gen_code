@@ -1,3 +1,5 @@
+@@Meta.Output="/src/main/java/{{.ServicePackage | replace "." "/"}}/impl/{{.ClassName}}ServiceImpl.java"
+
 package {{.ServicePackage}}.impl;
 
 import org.springframework.stereotype.Service;

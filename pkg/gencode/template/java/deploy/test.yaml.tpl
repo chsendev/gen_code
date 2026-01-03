@@ -1,0 +1,80 @@
+@@Meta.Output="/deploy/test.yaml"
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: kubesphere
+    component: {{.Config.ProjectName}}-dev
+    tier: backend
+  name: {{.Config.ProjectName}}-dev
+  namespace: $PROJECT_NAME
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubesphere
+      component: {{.Config.ProjectName}}-dev
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: kubesphere
+        component: {{.Config.ProjectName}}-dev
+        tier: backend
+    spec:
+      containers:
+        - env:
+            - name: CACHE_IGNORE
+              value: js|html
+            - name: CACHE_PUBLIC_EXPIRATION
+              value: 3d
+          image: $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            timeoutSeconds: 10
+            failureThreshold: 30
+            periodSeconds: 5
+          imagePullPolicy: Always
+          name: {{.Config.ProjectName}}
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          resources:
+            limits:
+              cpu: 300m
+              memory: 600Mi
+            requests:
+              cpu: 100m
+              memory: 100Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: kubesphere
+    component: {{.Config.ProjectName}}-dev
+  name: {{.Config.ProjectName}}-dev
+  namespace: $PROJECT_NAME
+spec:
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+      nodePort: 30861
+  selector:
+    app: kubesphere
+    component: {{.Config.ProjectName}}-dev
+    tier: backend
+  sessionAffinity: None
+  type: NodePort

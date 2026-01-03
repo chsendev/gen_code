@@ -1,9 +1,11 @@
 package gencode
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 	"time"
@@ -11,6 +13,7 @@ import (
 
 // Config 代码生成器配置
 type Config struct {
+	ProjectName   string        `json:"project_name"`
 	GenConfig     GenConfig     `json:"gen_config"`
 	PackageConfig PackageConfig `json:"package_config"`
 }
@@ -60,18 +63,12 @@ type Generator struct {
 	TemplatePath string
 }
 
-// 模板文件路径常量
-const (
-	EntityTemplateFile         = "pkg/gencode/template/java/src/main/java/entity/entity.java.tpl"
-	MapperTemplateFile         = "pkg/gencode/template/java/src/main/java/mapper/mapper.java.tpl"
-	MapperXmlTemplateFile      = "pkg/gencode/template/java/src/main/java/mapper/mapper.xml.tpl"
-	ServiceTemplateFile        = "pkg/gencode/template/java/src/main/java/service/service.java.tpl"
-	ServiceImplTemplateFile    = "pkg/gencode/template/java/src/main/java/service/impl/serviceImpl.java.tpl"
-	ControllerTemplateFile     = "pkg/gencode/template/java/src/main/java/controller/controller.java.tpl"
-	ApplicationTemplateFile    = "pkg/gencode/template/java/src/main/java/Application.java.tpl"
-	ApplicationYmlTemplateFile = "pkg/gencode/template/java/src/main/resources/application.yml.tpl"
-	PomXmlTemplateFile         = "pkg/gencode/template/java/pom.xml.tpl"
-)
+// TemplateInfo 模板信息
+type TemplateInfo struct {
+	FilePath   string // 模板文件路径
+	OutputPath string // 输出路径（从元数据解析或根据模板路径生成）
+	IsPerTable bool   // 是否需要为每个表生成（包含表相关变量）
+}
 
 // NewGenerator 创建代码生成器实例
 func NewGenerator(config Config, tables []Table) *Generator {
@@ -111,32 +108,10 @@ func (g *Generator) EnsureOutputDirs() error {
 		outputDir = "./output"
 	}
 
-	// 创建标准Maven目录结构
-	pkgConfig := g.Config.PackageConfig
-
-	// 将包名转换为目录路径
-	entityPath := strings.ReplaceAll(pkgConfig.EntityPackage, ".", "/")
-	mapperPath := strings.ReplaceAll(pkgConfig.MapperPackage, ".", "/")
-	servicePath := strings.ReplaceAll(pkgConfig.ServicePackage, ".", "/")
-	controllerPath := strings.ReplaceAll(pkgConfig.ControllerPackage, ".", "/")
-
-	dirs := []string{
-		// Maven标准目录结构
-		filepath.Join(outputDir, "src", "main", "java", entityPath),
-		filepath.Join(outputDir, "src", "main", "java", mapperPath),
-		filepath.Join(outputDir, "src", "main", "java", servicePath, "impl"),
-		filepath.Join(outputDir, "src", "main", "java", controllerPath),
-		filepath.Join(outputDir, "src", "main", "java", strings.ReplaceAll(pkgConfig.BasePackage, ".", "/"), "config"),
-		filepath.Join(outputDir, "src", "main", "resources"),
-		filepath.Join(outputDir, "src", "test", "java"),
-		filepath.Join(outputDir, "src", "test", "resources"),
-	}
-
-	for _, dir := range dirs {
-		err := os.MkdirAll(dir, 0755)
-		if err != nil {
-			return err
-		}
+	// 创建基础输出目录
+	err := os.MkdirAll(outputDir, 0755)
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -144,67 +119,177 @@ func (g *Generator) EnsureOutputDirs() error {
 
 // GenerateCode 生成代码
 func (g *Generator) GenerateCode() error {
-	// 生成Maven pom.xml文件
-	err := g.GeneratePomXml()
+	// 扫描所有模板文件
+	templates, err := g.scanTemplates()
 	if err != nil {
-		return fmt.Errorf("生成pom.xml失败: %v", err)
+		return fmt.Errorf("扫描模板文件失败: %v", err)
 	}
 
-	// 生成SpringBoot主启动类
-	err = g.GenerateApplication()
-	if err != nil {
-		return fmt.Errorf("生成Application启动类失败: %v", err)
-	}
-
-	// 生成application配置文件
-	err = g.GenerateApplicationConfig()
-	if err != nil {
-		return fmt.Errorf("生成application配置文件失败: %v", err)
-	}
-
-	// 遍历所有表
-	for _, table := range g.Tables {
-		// 准备模板数据
-		templateData := g.prepareTemplateData(&table)
-
-		// 生成实体类
-		err := g.GenerateEntity(templateData)
-		if err != nil {
-			return err
-		}
-
-		// 生成Mapper接口
-		err = g.GenerateMapper(templateData)
-		if err != nil {
-			return err
-		}
-
-		// 生成Mapper XML
-		err = g.GenerateMapperXML(templateData)
-		if err != nil {
-			return err
-		}
-
-		// 生成Service接口
-		err = g.GenerateService(templateData)
-		if err != nil {
-			return err
-		}
-
-		// 生成Service实现类
-		err = g.GenerateServiceImpl(templateData)
-		if err != nil {
-			return err
-		}
-
-		// 生成Controller
-		err = g.GenerateController(templateData)
-		if err != nil {
-			return err
+	// 生成代码
+	for _, tmplInfo := range templates {
+		if tmplInfo.IsPerTable {
+			// 需要为每个表生成
+			for _, table := range g.Tables {
+				templateData := g.prepareTemplateData(&table)
+				err := g.generateFromTemplate(tmplInfo, templateData)
+				if err != nil {
+					return fmt.Errorf("生成文件失败 [%s]: %v", tmplInfo.FilePath, err)
+				}
+			}
+		} else {
+			// 只生成一次（如pom.xml, Application.java等）
+			templateData := TemplateData{
+				Config: g.Config,
+			}
+			err := g.generateFromTemplate(tmplInfo, templateData)
+			if err != nil {
+				return fmt.Errorf("生成文件失败 [%s]: %v", tmplInfo.FilePath, err)
+			}
 		}
 	}
 
 	return nil
+}
+
+// scanTemplates 扫描所有模板文件
+func (g *Generator) scanTemplates() ([]TemplateInfo, error) {
+	var templates []TemplateInfo
+	templateDir := filepath.Join(g.TemplatePath, "pkg/gencode/template")
+
+	err := filepath.Walk(templateDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() && strings.HasSuffix(path, ".tpl") {
+			tmplInfo, err := g.parseTemplateInfo(path)
+			if err != nil {
+				return fmt.Errorf("解析模板信息失败 [%s]: %v", path, err)
+			}
+			templates = append(templates, tmplInfo)
+		}
+
+		return nil
+	})
+
+	return templates, err
+}
+
+// parseTemplateInfo 解析模板信息
+func (g *Generator) parseTemplateInfo(templatePath string) (TemplateInfo, error) {
+	file, err := os.Open(templatePath)
+	if err != nil {
+		return TemplateInfo{}, err
+	}
+	defer file.Close()
+
+	var outputPath string
+	var isPerTable bool
+
+	// 读取文件前几行查找元数据
+	scanner := bufio.NewScanner(file)
+	lineCount := 0
+	for scanner.Scan() && lineCount < 10 { // 只检查前10行
+		line := strings.TrimSpace(scanner.Text())
+
+		// 解析 @@Meta.Output 元数据
+		if strings.HasPrefix(line, "@@Meta.Output=") {
+			outputPath = strings.Trim(strings.TrimPrefix(line, "@@Meta.Output="), "\"")
+			break
+		}
+		lineCount++
+	}
+
+	// 如果没有找到元数据，根据模板文件路径生成输出路径
+	if outputPath == "" {
+		outputPath = g.generateOutputPathFromTemplate(templatePath)
+	}
+
+	// 检查是否包含表相关的模板变量，判断是否需要为每个表生成
+	content, err := os.ReadFile(templatePath)
+	if err != nil {
+		return TemplateInfo{}, err
+	}
+
+	contentStr := string(content)
+	// 检查是否包含表相关变量
+	tableVarPattern := regexp.MustCompile(`\{\{\.(?:Table|ClassName)\b`)
+	isPerTable = tableVarPattern.MatchString(contentStr)
+
+	return TemplateInfo{
+		FilePath:   templatePath,
+		OutputPath: outputPath,
+		IsPerTable: isPerTable,
+	}, nil
+}
+
+// generateOutputPathFromTemplate 根据模板文件路径生成输出路径
+func (g *Generator) generateOutputPathFromTemplate(templatePath string) string {
+	// 获取相对于template目录的路径
+	templateDir := filepath.Join(g.TemplatePath, "pkg/gencode/template")
+	relPath, err := filepath.Rel(templateDir, templatePath)
+	if err != nil {
+		return ""
+	}
+
+	// 移除.tpl后缀
+	outputPath := strings.TrimSuffix(relPath, ".tpl")
+
+	// 如果是java目录下的文件，需要添加前缀斜杠
+	if strings.HasPrefix(outputPath, "java/") {
+		outputPath = "/" + outputPath
+	}
+
+	return outputPath
+}
+
+// generateFromTemplate 根据模板信息生成文件
+func (g *Generator) generateFromTemplate(tmplInfo TemplateInfo, data TemplateData) error {
+	// 创建模板
+	tmpl, err := g.createTemplateWithFuncs(tmplInfo.FilePath)
+	if err != nil {
+		return fmt.Errorf("加载模板失败: %v", err)
+	}
+
+	// 渲染输出路径
+	outputPath, err := g.renderOutputPath(tmplInfo.OutputPath, data)
+	if err != nil {
+		return fmt.Errorf("渲染输出路径失败: %v", err)
+	}
+
+	// 生成完整的输出路径
+	baseOutputPath := g.Config.GenConfig.OutputPath
+	if baseOutputPath == "" {
+		baseOutputPath = "./output"
+	}
+
+	fullOutputPath := filepath.Join(baseOutputPath, outputPath)
+
+	// 确保输出目录存在
+	outputDir := filepath.Dir(fullOutputPath)
+	err = os.MkdirAll(outputDir, 0755)
+	if err != nil {
+		return fmt.Errorf("创建输出目录失败: %v", err)
+	}
+
+	// 生成文件
+	return g.generateFile(fullOutputPath, tmpl, data)
+}
+
+// renderOutputPath 渲染输出路径模板
+func (g *Generator) renderOutputPath(pathTemplate string, data TemplateData) (string, error) {
+	tmpl, err := template.New("outputPath").Funcs(g.getTemplateFuncMap()).Parse(pathTemplate)
+	if err != nil {
+		return "", err
+	}
+
+	var result strings.Builder
+	err = tmpl.Execute(&result, data)
+	if err != nil {
+		return "", err
+	}
+
+	return result.String(), nil
 }
 
 // TemplateData 模板数据
@@ -246,10 +331,9 @@ func (g *Generator) prepareTemplateData(table *Table) TemplateData {
 	}
 }
 
-// createTemplateWithFuncs 创建带有自定义函数的模板
-func (g *Generator) createTemplateWithFuncs(templatePath string) (*template.Template, error) {
-	// 定义自定义函数
-	funcMap := template.FuncMap{
+// getTemplateFuncMap 获取模板自定义函数映射
+func (g *Generator) getTemplateFuncMap() template.FuncMap {
+	return template.FuncMap{
 		"sub": func(a, b int) int {
 			return a - b
 		},
@@ -260,13 +344,28 @@ func (g *Generator) createTemplateWithFuncs(templatePath string) (*template.Temp
 			return strings.ReplaceAll(s, old, new)
 		},
 		"title": func(s string) string {
-			return strings.Title(s)
+			if len(s) == 0 {
+				return s
+			}
+			return strings.ToUpper(s[:1]) + strings.ToLower(s[1:])
 		},
 	}
+}
+
+// createTemplateWithFuncs 创建带有自定义函数的模板
+func (g *Generator) createTemplateWithFuncs(templatePath string) (*template.Template, error) {
+	// 读取模板文件内容
+	content, err := os.ReadFile(templatePath)
+	if err != nil {
+		return nil, err
+	}
+
+	// 清理元数据行
+	cleanedContent := g.cleanMetadataFromTemplate(string(content))
 
 	// 创建模板并添加自定义函数
-	tmpl := template.New(filepath.Base(templatePath)).Funcs(funcMap)
-	tmpl, err := tmpl.ParseFiles(templatePath)
+	tmpl := template.New(filepath.Base(templatePath)).Funcs(g.getTemplateFuncMap())
+	tmpl, err = tmpl.Parse(cleanedContent)
 	if err != nil {
 		return nil, err
 	}
@@ -274,123 +373,26 @@ func (g *Generator) createTemplateWithFuncs(templatePath string) (*template.Temp
 	return tmpl, nil
 }
 
-// GeneratePomXml 生成Maven pom.xml文件
-func (g *Generator) GeneratePomXml() error {
-	// 使用模板生成pom.xml
-	tmplPath := filepath.Join(g.TemplatePath, PomXmlTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载pom.xml模板失败: %v", err)
+// cleanMetadataFromTemplate 从模板内容中清理元数据行
+func (g *Generator) cleanMetadataFromTemplate(content string) string {
+	lines := strings.Split(content, "\n")
+	var cleanedLines []string
+
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		// 跳过元数据行
+		if strings.HasPrefix(trimmedLine, "@@Meta.") {
+			continue
+		}
+		cleanedLines = append(cleanedLines, line)
 	}
 
-	templateData := TemplateData{
-		Config: g.Config,
+	// 移除开头的空行
+	for len(cleanedLines) > 0 && strings.TrimSpace(cleanedLines[0]) == "" {
+		cleanedLines = cleanedLines[1:]
 	}
 
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	pomPath := filepath.Join(outputPath, "pom.xml")
-	return g.generateFile(pomPath, tmpl, templateData)
-}
-
-// GenerateApplication 生成SpringBoot主启动类
-func (g *Generator) GenerateApplication() error {
-	tmplPath := filepath.Join(g.TemplatePath, ApplicationTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载Application模板失败: %v", err)
-	}
-
-	templateData := TemplateData{
-		Config: g.Config,
-	}
-
-	return g.generateFile(g.getApplicationOutputPath(), tmpl, templateData)
-}
-
-// GenerateApplicationConfig 生成application配置文件
-func (g *Generator) GenerateApplicationConfig() error {
-	templateData := TemplateData{
-		Config: g.Config,
-	}
-
-	// 生成application.yml
-	tmplPath := filepath.Join(g.TemplatePath, ApplicationYmlTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载application.yml模板失败: %v", err)
-	}
-
-	return g.generateFile(g.getApplicationYmlOutputPath(), tmpl, templateData)
-}
-
-// GenerateEntity 生成实体类
-func (g *Generator) GenerateEntity(data TemplateData) error {
-	// 加载外部模板文件
-	tmplPath := filepath.Join(g.TemplatePath, EntityTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载实体类模板失败: %v", err)
-	}
-	return g.generateFile(g.getEntityOutputPath(data), tmpl, data)
-}
-
-// GenerateMapper 生成Mapper接口
-func (g *Generator) GenerateMapper(data TemplateData) error {
-	// 加载外部模板文件
-	tmplPath := filepath.Join(g.TemplatePath, MapperTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载Mapper接口模板失败: %v", err)
-	}
-	return g.generateFile(g.getMapperOutputPath(data), tmpl, data)
-}
-
-// GenerateMapperXML 生成Mapper XML
-func (g *Generator) GenerateMapperXML(data TemplateData) error {
-	// 加载外部模板文件
-	tmplPath := filepath.Join(g.TemplatePath, MapperXmlTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载Mapper XML模板失败: %v", err)
-	}
-	return g.generateFile(g.getMapperXmlOutputPath(data), tmpl, data)
-}
-
-// GenerateService 生成Service接口
-func (g *Generator) GenerateService(data TemplateData) error {
-	// 加载外部模板文件
-	tmplPath := filepath.Join(g.TemplatePath, ServiceTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载Service接口模板失败: %v", err)
-	}
-	return g.generateFile(g.getServiceOutputPath(data), tmpl, data)
-}
-
-// GenerateServiceImpl 生成Service实现类
-func (g *Generator) GenerateServiceImpl(data TemplateData) error {
-	// 加载外部模板文件
-	tmplPath := filepath.Join(g.TemplatePath, ServiceImplTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载Service实现类模板失败: %v", err)
-	}
-	return g.generateFile(g.getServiceImplOutputPath(data), tmpl, data)
-}
-
-// GenerateController 生成Controller
-func (g *Generator) GenerateController(data TemplateData) error {
-	// 加载外部模板文件
-	tmplPath := filepath.Join(g.TemplatePath, ControllerTemplateFile)
-	tmpl, err := g.createTemplateWithFuncs(tmplPath)
-	if err != nil {
-		return fmt.Errorf("加载Controller模板失败: %v", err)
-	}
-	return g.generateFile(g.getControllerOutputPath(data), tmpl, data)
+	return strings.Join(cleanedLines, "\n")
 }
 
 // generateFile 生成文件
@@ -407,93 +409,6 @@ func (g *Generator) generateFile(filePath string, tmpl *template.Template, data 
 	}
 
 	return nil
-}
-
-// getApplicationOutputPath 获取Application启动类输出路径
-func (g *Generator) getApplicationOutputPath() string {
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	basePath := strings.ReplaceAll(g.Config.PackageConfig.BasePackage, ".", "/")
-	return filepath.Join(outputPath, "src", "main", "java", basePath, "Application.java")
-}
-
-// getApplicationYmlOutputPath 获取application.yml输出路径
-func (g *Generator) getApplicationYmlOutputPath() string {
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	return filepath.Join(outputPath, "src", "main", "resources", "application.yml")
-}
-
-// getEntityOutputPath 获取实体类输出路径
-func (g *Generator) getEntityOutputPath(data TemplateData) string {
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	entityPath := strings.ReplaceAll(data.EntityPackage, ".", "/")
-	return filepath.Join(outputPath, "src", "main", "java", entityPath, data.ClassName+".java")
-}
-
-// getMapperOutputPath 获取Mapper接口输出路径
-func (g *Generator) getMapperOutputPath(data TemplateData) string {
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	mapperPath := strings.ReplaceAll(data.MapperPackage, ".", "/")
-	return filepath.Join(outputPath, "src", "main", "java", mapperPath, data.ClassName+"Mapper.java")
-}
-
-// getMapperXmlOutputPath 获取Mapper XML输出路径
-func (g *Generator) getMapperXmlOutputPath(data TemplateData) string {
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	mapperPath := strings.ReplaceAll(data.MapperPackage, ".", "/")
-	return filepath.Join(outputPath, "src", "main", "java", mapperPath, data.ClassName+"Mapper.xml")
-}
-
-// getServiceOutputPath 获取Service接口输出路径
-func (g *Generator) getServiceOutputPath(data TemplateData) string {
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	servicePath := strings.ReplaceAll(data.ServicePackage, ".", "/")
-	return filepath.Join(outputPath, "src", "main", "java", servicePath, "I"+data.ClassName+"Service.java")
-}
-
-// getServiceImplOutputPath 获取Service实现类输出路径
-func (g *Generator) getServiceImplOutputPath(data TemplateData) string {
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	servicePath := strings.ReplaceAll(data.ServicePackage, ".", "/")
-	return filepath.Join(outputPath, "src", "main", "java", servicePath, "impl", data.ClassName+"ServiceImpl.java")
-}
-
-// getControllerOutputPath 获取Controller输出路径
-func (g *Generator) getControllerOutputPath(data TemplateData) string {
-	outputPath := g.Config.GenConfig.OutputPath
-	if outputPath == "" {
-		outputPath = "./output"
-	}
-
-	controllerPath := strings.ReplaceAll(data.ControllerPackage, ".", "/")
-	return filepath.Join(outputPath, "src", "main", "java", controllerPath, data.ClassName+"Controller.java")
 }
 
 // Close 关闭资源（现在无需关闭数据库连接）

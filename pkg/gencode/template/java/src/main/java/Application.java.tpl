@@ -1,3 +1,5 @@
+@@Meta.Output="/src/main/java/{{.Config.PackageConfig.BasePackage | replace "." "/"}}/Application.java"
+
 package {{.Config.PackageConfig.BasePackage}};
 
 import org.mybatis.spring.annotation.MapperScan;
