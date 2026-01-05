@@ -8,7 +8,7 @@ metadata:
     component: {{.Config.ProjectName}}-dev
     tier: backend
   name: {{.Config.ProjectName}}-dev
-  namespace: $PROJECT_NAME
+  namespace: gencode
 spec:
   progressDeadlineSeconds: 600
   replicas: 1
@@ -30,10 +30,9 @@ spec:
               value: js|html
             - name: CACHE_PUBLIC_EXPIRATION
               value: 3d
-          image: $REGISTRY/$DOCKERHUB_NAMESPACE/$APP_NAME:SNAPSHOT-$BRANCH_NAME-$BUILD_NUMBER
+          image: $REGISTRY/$DOCKERHUB_NAMESPACE/{{.Config.ProjectName}}:SNAPSHOT-$SAFE_BRANCH_NAME-$BUILD_NUMBER
           readinessProbe:
-            httpGet:
-              path: /
+            tcpSocket:
               port: 8080
             timeoutSeconds: 10
             failureThreshold: 30
@@ -43,13 +42,6 @@ spec:
           ports:
             - containerPort: 8080
               protocol: TCP
-          resources:
-            limits:
-              cpu: 300m
-              memory: 600Mi
-            requests:
-              cpu: 100m
-              memory: 100Mi
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
       dnsPolicy: ClusterFirst
@@ -64,14 +56,13 @@ metadata:
     app: kubesphere
     component: {{.Config.ProjectName}}-dev
   name: {{.Config.ProjectName}}-dev
-  namespace: $PROJECT_NAME
+  namespace: gencode
 spec:
   ports:
     - name: http
       port: 8080
       protocol: TCP
       targetPort: 8080
-      nodePort: 30861
   selector:
     app: kubesphere
     component: {{.Config.ProjectName}}-dev

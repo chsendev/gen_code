@@ -1,0 +1,3 @@
+@@Meta.Output="/.gitignore"
+
+.idea
